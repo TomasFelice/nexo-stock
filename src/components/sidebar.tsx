@@ -1,0 +1,183 @@
+"use client";
+
+import { usePathname, useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import {
+    LayoutDashboard,
+    Package,
+    Warehouse,
+    ArrowLeftRight,
+    ShoppingCart,
+    RefreshCw,
+    BarChart3,
+    Settings,
+    LogOut,
+    X,
+    Menu,
+} from "lucide-react";
+import { useState, useEffect } from "react";
+
+const NAV_ITEMS = [
+    { label: "Dashboard", icon: LayoutDashboard, href: "/" },
+    { label: "Productos", icon: Package, href: "/productos" },
+    { label: "Depósitos", icon: Warehouse, href: "/depositos" },
+    { label: "Movimientos", icon: ArrowLeftRight, href: "/movimientos" },
+    { label: "Punto de Venta", icon: ShoppingCart, href: "/pos" },
+    { label: "Sincronización", icon: RefreshCw, href: "/sync" },
+    { label: "Reportes", icon: BarChart3, href: "/reportes" },
+];
+
+const BOTTOM_NAV_ITEMS = [
+    { label: "Configuración", icon: Settings, href: "/configuracion" },
+];
+
+interface SidebarProps {
+    userEmail: string | undefined;
+}
+
+export function Sidebar({ userEmail }: SidebarProps) {
+    const pathname = usePathname();
+    const router = useRouter();
+    const [mobileOpen, setMobileOpen] = useState(false);
+
+    // Close mobile sidebar on route change
+    useEffect(() => {
+        setMobileOpen(false);
+    }, [pathname]);
+
+    // Close on escape key
+    useEffect(() => {
+        const handleEsc = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setMobileOpen(false);
+        };
+        document.addEventListener("keydown", handleEsc);
+        return () => document.removeEventListener("keydown", handleEsc);
+    }, []);
+
+    // Prevent body scroll when mobile sidebar is open
+    useEffect(() => {
+        document.body.style.overflow = mobileOpen ? "hidden" : "";
+        return () => {
+            document.body.style.overflow = "";
+        };
+    }, [mobileOpen]);
+
+    async function handleLogout() {
+        const supabase = createClient();
+        await supabase.auth.signOut();
+        router.push("/login");
+    }
+
+    function isActive(href: string) {
+        if (href === "/") return pathname === "/";
+        return pathname.startsWith(href);
+    }
+
+    const sidebarContent = (
+        <>
+            {/* ── Logo ── */}
+            <div className="sidebar-logo">
+                <div className="sidebar-logo-icon">
+                    <Package size={20} color="white" strokeWidth={1.5} />
+                </div>
+                <span className="sidebar-logo-text">NexoStock</span>
+
+                {/* Mobile close button */}
+                <button
+                    className="sidebar-close-btn"
+                    onClick={() => setMobileOpen(false)}
+                    aria-label="Cerrar menú"
+                >
+                    <X size={20} />
+                </button>
+            </div>
+
+            {/* ── Navigation ── */}
+            <nav className="sidebar-nav">
+                {NAV_ITEMS.map((item) => {
+                    const active = isActive(item.href);
+                    return (
+                        <a
+                            key={item.href}
+                            href={item.href}
+                            className={`sidebar-nav-item ${active ? "active" : ""}`}
+                            onClick={(e) => {
+                                e.preventDefault();
+                                router.push(item.href);
+                            }}
+                        >
+                            <item.icon size={20} strokeWidth={1.5} />
+                            <span>{item.label}</span>
+                        </a>
+                    );
+                })}
+
+                <div className="sidebar-nav-divider" />
+
+                {BOTTOM_NAV_ITEMS.map((item) => {
+                    const active = isActive(item.href);
+                    return (
+                        <a
+                            key={item.href}
+                            href={item.href}
+                            className={`sidebar-nav-item ${active ? "active" : ""}`}
+                            onClick={(e) => {
+                                e.preventDefault();
+                                router.push(item.href);
+                            }}
+                        >
+                            <item.icon size={20} strokeWidth={1.5} />
+                            <span>{item.label}</span>
+                        </a>
+                    );
+                })}
+            </nav>
+
+            {/* ── User section ── */}
+            <div className="sidebar-user">
+                <div className="sidebar-user-info">
+                    <div className="sidebar-user-avatar">
+                        {userEmail ? userEmail[0].toUpperCase() : "?"}
+                    </div>
+                    <span className="sidebar-user-email" title={userEmail}>
+                        {userEmail || "Usuario"}
+                    </span>
+                </div>
+                <button
+                    onClick={handleLogout}
+                    className="sidebar-logout-btn"
+                    aria-label="Cerrar sesión"
+                    title="Cerrar sesión"
+                >
+                    <LogOut size={18} strokeWidth={1.5} />
+                </button>
+            </div>
+        </>
+    );
+
+    return (
+        <>
+            {/* ── Mobile hamburger button ── */}
+            <button
+                className="sidebar-hamburger"
+                onClick={() => setMobileOpen(true)}
+                aria-label="Abrir menú"
+            >
+                <Menu size={22} strokeWidth={1.5} />
+            </button>
+
+            {/* ── Backdrop (mobile) ── */}
+            {mobileOpen && (
+                <div
+                    className="sidebar-backdrop"
+                    onClick={() => setMobileOpen(false)}
+                />
+            )}
+
+            {/* ── Sidebar panel ── */}
+            <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>
+                {sidebarContent}
+            </aside>
+        </>
+    );
+}
