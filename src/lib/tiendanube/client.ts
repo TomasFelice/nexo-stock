@@ -18,15 +18,18 @@ export class TiendanubeClient {
 
     private async request<T>(
         path: string,
+        options?: RequestInit,
         retryCount = 0
     ): Promise<T> {
         const url = `${this.baseUrl}${path}`;
 
         const res = await fetch(url, {
+            ...options,
             headers: {
                 Authentication: `bearer ${this.accessToken}`,
                 "Content-Type": "application/json",
                 "User-Agent": "NexoStock/1.0 (benai.cpy@gmail.com)",
+                ...options?.headers,
             },
         });
 
@@ -35,7 +38,7 @@ export class TiendanubeClient {
             const backoff =
                 INITIAL_BACKOFF_MS * Math.pow(2, retryCount);
             await new Promise((resolve) => setTimeout(resolve, backoff));
-            return this.request<T>(path, retryCount + 1);
+            return this.request<T>(path, options, retryCount + 1);
         }
 
         if (!res.ok) {
@@ -91,5 +94,29 @@ export class TiendanubeClient {
         }
 
         return allProducts;
+    }
+
+    /**
+     * Updates a variant's attributes in Tiendanube (e.g. stock, price)
+     */
+    async updateVariant(
+        productId: number,
+        variantId: number,
+        data: Record<string, any>
+    ): Promise<any> {
+        return this.request<any>(
+            `/products/${productId}/variants/${variantId}`,
+            {
+                method: "PUT",
+                body: JSON.stringify(data),
+            }
+        );
+    }
+
+    /**
+     * Retrieves an order by ID.
+     */
+    async getOrder(orderId: number): Promise<any> {
+        return this.request<any>(`/orders/${orderId}`);
     }
 }

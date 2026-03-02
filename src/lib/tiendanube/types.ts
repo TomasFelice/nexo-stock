@@ -57,11 +57,21 @@ export interface TnCategory {
     handle: TnLocalizedString;
 }
 
-/** Import result summary */
 export interface CatalogImportResult {
     productsImported: number;
     variantsImported: number;
     productsSkipped: number;
     errors: string[];
     timestamp: string;
+}
+
+export interface TnVariantUpdatePayload {
+    stock?: number | null;
+    price?: number | string;
+    promotional_price?: number | string | null;
+    cost?: number | string | null;
+    weight?: number | string | null;
+    width?: number | string | null;
+    height?: number | string | null;
+    depth?: number | string | null;
 }
