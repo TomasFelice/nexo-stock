@@ -74,6 +74,7 @@ const MOVEMENT_TYPES = [
     { value: "ajuste", label: "Ajuste", icon: SlidersHorizontal },
     { value: "venta", label: "Venta", icon: ShoppingCart },
     { value: "devolucion", label: "Devolución", icon: RotateCcw },
+    { value: "cancelacion", label: "Cancelación", icon: X },
     { value: "transferencia", label: "Transferencia", icon: ArrowRightLeft },
     { value: "cambio", label: "Cambio", icon: RefreshCw },
 ];
@@ -84,6 +85,7 @@ const TYPE_BADGE_CLASS: Record<string, string> = {
     ajuste: "mv-badge-ajuste",
     venta: "mv-badge-venta",
     devolucion: "mv-badge-devolucion",
+    cancelacion: "mv-badge-cancelacion",
     transferencia: "mv-badge-transferencia",
     cambio: "mv-badge-cambio",
 };
@@ -308,6 +310,7 @@ export default function MovimientosPage() {
         switch (m.movement_type) {
             case "ingreso":
             case "devolucion":
+            case "cancelacion":
                 return `+${m.quantity}`;
             case "egreso":
             case "venta":
@@ -326,6 +329,7 @@ export default function MovimientosPage() {
         switch (m.movement_type) {
             case "ingreso":
             case "devolucion":
+            case "cancelacion":
                 return "mv-qty-positive";
             case "egreso":
             case "venta":
@@ -357,7 +361,7 @@ export default function MovimientosPage() {
                     </button>
                 </div>
                 <p className="page-subtitle">
-                    Historial de todos los cambios de stock: ingresos, egresos, ajustes, ventas, devoluciones y transferencias.
+                    Historial de todos los cambios de stock: ingresos, egresos, ajustes, ventas, devoluciones, cancelaciones y transferencias.
                 </p>
             </div>
 

@@ -8,6 +8,7 @@ type SyncStats = {
     processing: number;
     completed: number;
     failed: number;
+    deadLetter: number;
 };
 
 type SyncLog = {
@@ -22,7 +23,7 @@ type SyncLog = {
 
 export default function SyncDashboardPage() {
     const [stats, setStats] = useState<SyncStats>({
-        pending: 0, processing: 0, completed: 0, failed: 0,
+        pending: 0, processing: 0, completed: 0, failed: 0, deadLetter: 0,
     });
     const [logs, setLogs] = useState<SyncLog[]>([]);
     const [page, setPage] = useState(1);
@@ -31,6 +32,7 @@ export default function SyncDashboardPage() {
     const [isSyncing, setIsSyncing] = useState(false);
     const [isTriggeringFull, setIsTriggeringFull] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [lastSuccessfulSync, setLastSuccessfulSync] = useState<string | null>(null);
 
     const fetchSyncStatus = useCallback(async (currentPage = page) => {
         try {
@@ -40,6 +42,7 @@ export default function SyncDashboardPage() {
             setStats(data.stats);
             setLogs(data.logs.data);
             setTotalPages(data.logs.totalPages || 1);
+            setLastSuccessfulSync(data.lastSuccessfulSync || null);
         } catch (err: any) {
             setError(err.message || "Error al cargar estado de sincronización");
         } finally {
@@ -102,6 +105,12 @@ export default function SyncDashboardPage() {
                 <p className="page-subtitle">
                     Supervisa y gestiona el flujo de stock desde tus depósitos hacia tu tienda web.
                 </p>
+                {lastSuccessfulSync && (
+                    <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1.5 font-medium">
+                        <CheckCircle2 size={13} strokeWidth={2.5} />
+                        Última sincronización exitosa: {new Date(lastSuccessfulSync).toLocaleString()}
+                    </p>
+                )}
             </div>
 
             <div className="wh-action-bar" style={{ display: 'flex', gap: '0.75rem' }}>
@@ -132,7 +141,7 @@ export default function SyncDashboardPage() {
                 </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
                 <StatCard
                     title="Pendientes"
                     value={stats.pending}
@@ -160,6 +169,13 @@ export default function SyncDashboardPage() {
                     icon={<AlertCircle size={20} color="#dc2626" />}
                     colorClass={stats.failed > 0 ? "bg-red-50 border-red-200" : "bg-white border-gray-200"}
                     textColor="#dc2626"
+                />
+                <StatCard
+                    title="Irrecuperables"
+                    value={stats.deadLetter}
+                    icon={<AlertCircle size={20} color="#7c3aed" />}
+                    colorClass={stats.deadLetter > 0 ? "bg-violet-50 border-violet-200" : "bg-white border-gray-200"}
+                    textColor="#7c3aed"
                 />
             </div>
 

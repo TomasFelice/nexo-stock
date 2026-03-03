@@ -25,6 +25,7 @@ export async function GET(request: Request) {
         const processing = queueData?.filter(q => q.status === "processing").length || 0;
         const completed = queueData?.filter(q => q.status === "completed").length || 0;
         const failed = queueData?.filter(q => q.status === "failed").length || 0;
+        const deadLetter = queueData?.filter(q => q.status === "dead_letter").length || 0;
 
         // Extract active queue items (to display in table)
         const activeQueueItems = queueData
@@ -52,15 +53,26 @@ export async function GET(request: Request) {
         // If we are on the first page, prepend the active queue items
         const logsData = page === 1 ? [...activeQueueItems, ...(recentLogs || [])] : (recentLogs || []);
 
+        // Fetch last successful sync timestamp
+        const { data: lastSuccessLog } = await supabase
+            .from("sync_log")
+            .select("created_at")
+            .eq("status", "success")
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .single();
+
         return NextResponse.json({
             stats: {
                 pending,
                 processing,
                 completed,
                 failed,
+                deadLetter,
             },
+            lastSuccessfulSync: lastSuccessLog?.created_at || null,
             logs: {
-                data: logsData.slice(0, 10), // Ensure we only return roughly a page worth if active queue is huge
+                data: logsData.slice(0, 10),
                 total: totalLogs || 0,
                 page,
                 totalPages: Math.ceil((totalLogs || 0) / limit)

@@ -1,17 +1,23 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
-import { createClient } from "@/lib/supabase/server";
+import { createClient } from "@supabase/supabase-js";
+import { Database } from "@/types/database";
 import { TiendanubeClient } from "@/lib/tiendanube/client";
 
 export async function POST(request: Request) {
     try {
         const rawBody = await request.text();
-        const signature = request.headers.get("x-tiendanube-hmac-sha256");
-        const event = request.headers.get("x-tiendanube-event");
-        const storeId = request.headers.get("x-tiendanube-store-id");
 
-        if (!signature || !event || !storeId) {
-            return NextResponse.json({ error: "Missing required headers" }, { status: 400 });
+        console.log("Headers received:", Object.fromEntries(request.headers.entries()));
+        console.log("Body length:", rawBody.length);
+
+        const signature = request.headers.get("x-tiendanube-hmac-sha256") || request.headers.get("x-linkedstore-hmac-sha256");
+
+        console.log("Mapped headers:", { signature });
+
+        if (!signature) {
+            console.error("Missing required signature header in webhook");
+            return NextResponse.json({ error: "Missing required signature header" }, { status: 400 });
         }
 
         const clientSecret = process.env.TIENDANUBE_CLIENT_SECRET;
@@ -31,10 +37,29 @@ export async function POST(request: Request) {
         }
 
         const payload = JSON.parse(rawBody);
+        const event = payload.event;
+        const storeId = payload.store_id?.toString();
 
-        // Process only order/paid events (or other order events if preferred)
-        if (event === "order/paid" || event === "order/created") {
-            await handleOrderEvent(storeId, payload.id, event);
+        if (!event || !storeId) {
+            console.error("Missing required payload fields");
+            return NextResponse.json({ error: "Missing required payload fields" }, { status: 400 });
+        }
+
+        console.log(`Received webhook event: ${event} for store: ${storeId}, orderId: ${payload.id}`);
+
+        // Handle order payment: only order/paid triggers stock deduction.
+        // We intentionally do NOT handle order/created here because Tiendanube
+        // always fires order/paid when payment is confirmed (even for instant payments).
+        // Processing order/created caused duplicate sales due to race conditions.
+        if (event === "order/paid" || event === "orders/paid") {
+            const result = await handleOrderSaleEvent(storeId, payload.id, event);
+            if (result) return result;
+        }
+
+        // Handle order cancellation: revert stock movements if they exist
+        if (event === "order/cancelled" || event === "orders/cancelled") {
+            const result = await handleOrderCancelledEvent(storeId, payload.id, event);
+            if (result) return result;
         }
 
         return NextResponse.json({ success: true });
@@ -44,37 +69,87 @@ export async function POST(request: Request) {
     }
 }
 
-async function handleOrderEvent(storeId: string, orderId: number, event: string) {
-    const supabase = await createClient();
+/**
+ * Creates a Supabase admin client and validates the store settings.
+ * Returns { supabase, tnClient } or throws/returns an error response.
+ */
+async function getClientsForStore(storeId: string) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const supabase = createClient<Database>(supabaseUrl, supabaseKey);
 
-    // 1. Get Tiendanube settings to find the access token for this store
-    // Since we simplified the schema we only have a general app_settings or we assume single tenant
-    // Let's get the token from settings.
     const { data: settings } = await supabase
         .from("app_settings")
         .select("key, value")
-        .in("key", ["tiendanube_access_token", "tiendanube_store_id"]);
+        .in("key", ["tn_access_token", "tn_store_id"]);
 
-    const tokenSetting = settings?.find((s) => s.key === "tiendanube_access_token")?.value;
-    const dbStoreId = settings?.find((s) => s.key === "tiendanube_store_id")?.value;
+    const tokenSetting = settings?.find((s) => s.key === "tn_access_token")?.value;
+    const dbStoreId = settings?.find((s) => s.key === "tn_store_id")?.value;
 
     if (!tokenSetting || dbStoreId !== storeId) {
         console.error("Store ID mismatch or no token config found.");
-        return; // Skip if not our store
+        return { error: NextResponse.json({ error: "Store ID mismatch or no token config found" }, { status: 400 }) };
     }
 
     const tnClient = new TiendanubeClient(tokenSetting, storeId);
+    return { supabase, tnClient };
+}
 
-    // 2. Fetch order details to get the exact items
+/**
+ * Handles order/paid events.
+ * Verifies the order's payment_status is "paid" before deducting stock.
+ * Idempotent: skips if a venta movement already exists for this order.
+ */
+async function handleOrderSaleEvent(storeId: string, orderId: number, event: string) {
+    const clients = await getClientsForStore(storeId);
+    if ("error" in clients) return clients.error;
+    const { supabase, tnClient } = clients;
+
+    // Fetch order details from Tiendanube
     const order = await tnClient.getOrder(orderId);
 
-    // We only process if it hasn't been processed yet, or depend on idempotency.
-    // Order products structure: order.products is an array.
     if (!order || !order.products || order.products.length === 0) {
+        console.log(`Order ${orderId} has no products, skipping.`);
         return;
     }
 
-    // 3. Find primary warehouse
+    // Key guard: only process if payment is confirmed (payment_status === "paid")
+    // This handles both events consistently:
+    // - order/created with payment_status "paid" → immediate payment (e.g. MercadoPago)
+    // - order/paid → always has payment_status "paid"
+    // - order/created with payment_status "pending" → skip, wait for order/paid
+    const paymentStatus = order.payment_status;
+    const orderStatus = order.status;
+
+    console.log(`Order #${order.number} (id: ${orderId}) — status: "${orderStatus}", payment_status: "${paymentStatus}", event: "${event}"`);
+
+    if (paymentStatus !== "paid") {
+        console.log(
+            `Order #${order.number}: payment_status is "${paymentStatus}" (not "paid"). Skipping stock deduction.`
+        );
+        return;
+    }
+
+    // Guard against cancelled orders arriving with wrong event
+    if (orderStatus === "cancelled") {
+        console.log(`Order #${order.number}: status is "cancelled". Skipping sale processing.`);
+        return;
+    }
+
+    // Prevent duplicate processing: check if a venta movement already exists for this order
+    const { data: existingMovements } = await supabase
+        .from("stock_movements")
+        .select("id")
+        .eq("movement_type", "venta")
+        .like("reference", `TN Order #${order.number} (%`)
+        .limit(1);
+
+    if (existingMovements && existingMovements.length > 0) {
+        console.log(`Order #${order.number} already processed as venta. Skipping to avoid duplicate.`);
+        return;
+    }
+
+    // Find primary warehouse
     const { data: primaryWarehouse } = await supabase
         .from("warehouses")
         .select("id")
@@ -87,14 +162,14 @@ async function handleOrderEvent(storeId: string, orderId: number, event: string)
         return;
     }
 
-    // 4. Process each product in the order
+    // Process each product in the order
     for (const item of order.products) {
         const tnVariantId = item.variant_id;
         const quantityToDeduct = parseInt(item.quantity, 10);
 
         if (!tnVariantId || isNaN(quantityToDeduct)) continue;
 
-        // Find the variant in our DB by tn_variant_id
+        // Find variant in our DB by tn_variant_id
         const { data: variant } = await supabase
             .from("variants")
             .select("id")
@@ -106,10 +181,7 @@ async function handleOrderEvent(storeId: string, orderId: number, event: string)
             continue;
         }
 
-        // We should record the stock movement as 'venta'
-        // For webhooks, we don't have a user_id. We can leave it null or map to an admin bot.
-
-        // 5. Create a movement of type 'venta'
+        // Create stock movement of type 'venta'
         const { data: movement, error: movError } = await supabase
             .from("stock_movements")
             .insert({
@@ -129,7 +201,7 @@ async function handleOrderEvent(storeId: string, orderId: number, event: string)
             continue;
         }
 
-        // 6. Update stock_levels
+        // Update stock_levels
         const { data: currentStock } = await supabase
             .from("stock_levels")
             .select("id, quantity")
@@ -141,24 +213,118 @@ async function handleOrderEvent(storeId: string, orderId: number, event: string)
             const newQty = Math.max(0, currentStock.quantity - quantityToDeduct);
             await supabase
                 .from("stock_levels")
-                .update({
-                    quantity: newQty,
-                    updated_at: new Date().toISOString()
-                })
+                .update({ quantity: newQty, updated_at: new Date().toISOString() })
                 .eq("id", currentStock.id);
         } else {
-            // It shouldn't be null ideally if there's stock, but if there isn't we can insert negative or zero.
-            // Let's just create it with 0 if it goes below 0, or just let it exist.
-            // Some stores allow negative stock but usually we cap at 0 like in `upsertStockLevel`
             await supabase
                 .from("stock_levels")
-                .insert({
-                    variant_id: variant.id,
-                    warehouse_id: primaryWarehouse.id,
-                    quantity: 0 // Cannot be negative based on business logic from previous files
-                });
+                .insert({ variant_id: variant.id, warehouse_id: primaryWarehouse.id, quantity: 0 });
         }
 
-        console.log(`Processed order item ${item.id} for order ${orderId}, deducted ${quantityToDeduct} from variant ${variant.id}`);
+        console.log(
+            `Processed item ${item.id}: deducted ${quantityToDeduct} from variant ${variant.id} (movement: ${movement?.id})`
+        );
     }
+
+    console.log(`✅ Order #${order.number} sale processed successfully.`);
+}
+
+/**
+ * Handles order/cancelled events.
+ * If the order had venta movements already recorded, reverts the stock by creating
+ * 'cancelacion' movements and restoring stock_levels.
+ */
+async function handleOrderCancelledEvent(storeId: string, orderId: number, event: string) {
+    const clients = await getClientsForStore(storeId);
+    if ("error" in clients) return clients.error;
+    const { supabase, tnClient } = clients;
+
+    // Fetch order details to get the order number for reference lookup
+    const order = await tnClient.getOrder(orderId);
+
+    if (!order) {
+        console.log(`Order ${orderId} not found in Tiendanube. Nothing to revert.`);
+        return;
+    }
+
+    console.log(`Processing cancellation for Order #${order.number} (id: ${orderId})`);
+
+    // Find all venta movements for this order
+    const { data: ventaMovements } = await supabase
+        .from("stock_movements")
+        .select("id, variant_id, quantity, source_warehouse_id")
+        .eq("movement_type", "venta")
+        .like("reference", `TN Order #${order.number} (%`);
+
+    if (!ventaMovements || ventaMovements.length === 0) {
+        console.log(`Order #${order.number}: no venta movements found. Nothing to revert.`);
+        return;
+    }
+
+    // Check if already reverted: use wildcard to match any event variant
+    // (Tiendanube can fire both "order/cancelled" and "orders/cancelled" for the same order)
+    const { data: existingReversals } = await supabase
+        .from("stock_movements")
+        .select("id")
+        .eq("movement_type", "cancelacion")
+        .like("reference", `TN Order #${order.number} (%`)
+        .limit(1);
+
+    if (existingReversals && existingReversals.length > 0) {
+        console.log(`Order #${order.number}: cancellation already processed. Skipping.`);
+        return;
+    }
+
+    // Revert each venta movement
+    for (const ventaMov of ventaMovements) {
+        const { variant_id, quantity, source_warehouse_id } = ventaMov;
+
+        if (!source_warehouse_id) continue;
+
+        // Create a cancelacion movement to restore stock
+        const { data: devMov, error: devErr } = await supabase
+            .from("stock_movements")
+            .insert({
+                variant_id,
+                source_warehouse_id: null,
+                target_warehouse_id: source_warehouse_id,
+                movement_type: "cancelacion",
+                quantity,
+                reference: `TN Order #${order.number} (${event})`,
+                notes: `Reversión automática por cancelación de orden TiendaNube. Movimiento original: ${ventaMov.id}`,
+            })
+            .select("id")
+            .single();
+
+        if (devErr) {
+            console.error(`Failed to insert cancelacion movement for venta ${ventaMov.id}:`, devErr.message);
+            continue;
+        }
+
+        // Restore stock_levels
+        const { data: currentStock } = await supabase
+            .from("stock_levels")
+            .select("id, quantity")
+            .eq("variant_id", variant_id)
+            .eq("warehouse_id", source_warehouse_id)
+            .maybeSingle();
+
+        if (currentStock) {
+            await supabase
+                .from("stock_levels")
+                .update({ quantity: currentStock.quantity + quantity, updated_at: new Date().toISOString() })
+                .eq("id", currentStock.id);
+        } else {
+            // Stock level didn't exist; create it with the restored quantity
+            await supabase
+                .from("stock_levels")
+                .insert({ variant_id, warehouse_id: source_warehouse_id, quantity });
+        }
+
+        console.log(
+            `Reverted venta movement ${ventaMov.id}: restored ${quantity} units to variant ${variant_id} in warehouse ${source_warehouse_id} (cancelacion: ${devMov?.id})`
+        );
+    }
+
+    console.log(`✅ Order #${order.number} cancellation processed — ${ventaMovements.length} venta movement(s) reverted.`);
 }

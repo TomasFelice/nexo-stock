@@ -9,6 +9,7 @@ const MOVEMENT_TYPES = [
     "ajuste",
     "venta",
     "devolucion",
+    "cancelacion",
     "transferencia",
     "cambio",
 ] as const;
@@ -246,8 +247,9 @@ export async function POST(request: Request) {
                 await upsertStockLevel(supabase, variant_id, source_warehouse_id, -quantity);
                 break;
             }
-            case "devolucion": {
-                // Increase stock at source warehouse (return)
+            case "devolucion":
+            case "cancelacion": {
+                // Increase stock at source warehouse (return / cancellation)
                 await upsertStockLevel(supabase, variant_id, source_warehouse_id, quantity);
                 break;
             }

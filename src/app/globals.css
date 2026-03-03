@@ -1927,6 +1927,11 @@ body {
   color: #0369A1;
 }
 
+.mv-badge-cancelacion {
+  background: #FFF1F2;
+  color: #BE123C;
+}
+
 .mv-badge-transferencia {
   background: #F5F3FF;
   color: #7C3AED;

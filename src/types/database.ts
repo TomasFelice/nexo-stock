@@ -260,6 +260,7 @@ export type Database = {
                 Row: {
                     created_at: string
                     direction: string
+                    duration_ms: number | null
                     error_details: string | null
                     event_type: string
                     id: number
@@ -269,6 +270,7 @@ export type Database = {
                 Insert: {
                     created_at?: string
                     direction: string
+                    duration_ms?: number | null
                     error_details?: string | null
                     event_type: string
                     id?: never
@@ -278,6 +280,7 @@ export type Database = {
                 Update: {
                     created_at?: string
                     direction?: string
+                    duration_ms?: number | null
                     error_details?: string | null
                     event_type?: string
                     id?: never

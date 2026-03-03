@@ -2,6 +2,9 @@ import { createClient } from "@supabase/supabase-js";
 import { Database } from "@/types/database";
 import { TiendanubeClient } from "@/lib/tiendanube/client";
 
+const MAX_RETRY_COUNT = 5;
+const BACKOFF_BASE_MS = 1000; // 1s, 2s, 4s, 8s, 16s
+
 export async function processSyncQueue(batchSize = 30) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -32,7 +35,37 @@ export async function processSyncQueue(batchSize = 30) {
         settings.tn_store_id
     );
 
-    // Step 1: Query up to 30 pending items from sync_queue
+    // Step 1: Re-enqueue failed items eligible for retry (backoff has expired)
+    const { data: failedItems } = await supabase
+        .from("sync_queue")
+        .select("*")
+        .eq("status", "failed")
+        .lt("retry_count", MAX_RETRY_COUNT);
+
+    if (failedItems && failedItems.length > 0) {
+        const now = Date.now();
+        for (const item of failedItems) {
+            const backoffMs = BACKOFF_BASE_MS * Math.pow(2, item.retry_count);
+            const processedAt = item.processed_at ? new Date(item.processed_at).getTime() : 0;
+            const eligibleAt = processedAt + backoffMs;
+
+            if (now >= eligibleAt) {
+                await supabase
+                    .from("sync_queue")
+                    .update({ status: "pending" })
+                    .eq("id", item.id);
+            }
+        }
+    }
+
+    // Step 2: Mark failed items with retry_count >= MAX_RETRY_COUNT as dead_letter
+    await supabase
+        .from("sync_queue")
+        .update({ status: "dead_letter" })
+        .eq("status", "failed")
+        .gte("retry_count", MAX_RETRY_COUNT);
+
+    // Step 3: Query up to batchSize pending items from sync_queue
     const { data: queueItems, error: queueError } = await supabase
         .from("sync_queue")
         .select("*")
@@ -62,12 +95,14 @@ export async function processSyncQueue(batchSize = 30) {
     };
 
     for (const item of queueItems) {
+        const startTime = Date.now();
+
         try {
             if (item.action !== "update_stock") {
                 throw new Error(`Unsupported action: ${item.action}`);
             }
 
-            // Step 2: Sum the stock_levels across all warehouses where syncs_to_web = true
+            // Sum the stock_levels across all warehouses where syncs_to_web = true
             const { data: stockData, error: stockError } = await supabase
                 .from("stock_levels")
                 .select("quantity, warehouses!inner(id, syncs_to_web)")
@@ -81,8 +116,7 @@ export async function processSyncQueue(batchSize = 30) {
                 0
             ) || 0;
 
-            // Step 3: Fetch tn_variant_id and tn_product_id
-            // Need products joined
+            // Fetch tn_variant_id and tn_product_id
             const { data: variantData, error: variantError } = await supabase
                 .from("variants")
                 .select("tn_variant_id, product_id, products(tn_product_id)")
@@ -91,11 +125,10 @@ export async function processSyncQueue(batchSize = 30) {
 
             if (variantError) throw variantError;
 
-            // supabase-js returns nested relationships as an object or array. products is One-to-One here (variant belongs to product)
             const productsInfo = Array.isArray(variantData.products) ? variantData.products[0] : variantData.products;
 
             if (!variantData.tn_variant_id || !productsInfo?.tn_product_id) {
-                // If variant is not linked to TN, just mark as completed but mention it's not connected
+                const durationMs = Date.now() - startTime;
                 await supabase
                     .from("sync_queue")
                     .update({
@@ -104,17 +137,32 @@ export async function processSyncQueue(batchSize = 30) {
                         error_message: "Variant not linked to Tiendanube",
                     })
                     .eq("id", item.id);
+
+                await supabase.from("sync_log").insert({
+                    direction: "outbound",
+                    event_type: "stock_update",
+                    status: "success",
+                    duration_ms: durationMs,
+                    payload: {
+                        variant_id: item.variant_id,
+                        skipped: true,
+                        reason: "Variant not linked to Tiendanube",
+                    },
+                });
+
                 results.success++;
                 continue;
             }
 
             const productId = productsInfo.tn_product_id;
             const variantId = variantData.tn_variant_id;
+            const requestPayload = { stock: totalWebStock };
 
-            // Step 4: Call tiendanubeClient.updateVariant
-            await tnClient.updateVariant(productId, variantId, { stock: totalWebStock });
+            // Call tiendanubeClient.updateVariant and capture response
+            const tnResponse = await tnClient.updateVariant(productId, variantId, requestPayload);
+            const durationMs = Date.now() - startTime;
 
-            // Step 5: Update the sync_queue item with completed
+            // Update the sync_queue item with completed
             await supabase
                 .from("sync_queue")
                 .update({
@@ -124,24 +172,38 @@ export async function processSyncQueue(batchSize = 30) {
                 })
                 .eq("id", item.id);
 
-            // Also log success
+            // Log success with request/response and duration
             await supabase.from("sync_log").insert({
                 direction: "outbound",
                 event_type: "stock_update",
                 status: "success",
-                payload: { variant_id: item.variant_id, new_stock: totalWebStock },
+                duration_ms: durationMs,
+                payload: {
+                    variant_id: item.variant_id,
+                    new_stock: totalWebStock,
+                    request: {
+                        tn_product_id: productId,
+                        tn_variant_id: variantId,
+                        body: requestPayload,
+                    },
+                    response: tnResponse,
+                },
             });
 
             results.success++;
         } catch (error: any) {
-            // Update the sync_queue item with failed
+            const durationMs = Date.now() - startTime;
+            const newRetryCount = item.retry_count + 1;
+            const isFinalAttempt = newRetryCount >= MAX_RETRY_COUNT;
+
+            // If max retries reached, mark as dead_letter; otherwise keep as failed for future retry
             await supabase
                 .from("sync_queue")
                 .update({
-                    status: "failed",
+                    status: isFinalAttempt ? "dead_letter" : "failed",
                     processed_at: new Date().toISOString(),
                     error_message: error.message || "Unknown error",
-                    retry_count: item.retry_count + 1,
+                    retry_count: newRetryCount,
                 })
                 .eq("id", item.id);
 
@@ -149,12 +211,17 @@ export async function processSyncQueue(batchSize = 30) {
                 direction: "outbound",
                 event_type: "stock_update",
                 status: "error",
+                duration_ms: durationMs,
                 error_details: error.message || "Unknown error",
-                payload: { variant_id: item.variant_id },
+                payload: {
+                    variant_id: item.variant_id,
+                    retry_count: newRetryCount,
+                    is_dead_letter: isFinalAttempt,
+                },
             });
 
             results.failed++;
-            results.details.push({ id: item.id, error: error.message });
+            results.details.push({ id: item.id, error: error.message, retry_count: newRetryCount, dead_letter: isFinalAttempt });
         }
     }
 
