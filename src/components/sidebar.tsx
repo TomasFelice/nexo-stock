@@ -14,6 +14,7 @@ import {
     LogOut,
     X,
     Menu,
+    Bell,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
     { label: "Movimientos", icon: ArrowLeftRight, href: "/movimientos" },
     { label: "Punto de Venta", icon: ShoppingCart, href: "/pos" },
     { label: "Sincronización", icon: RefreshCw, href: "/sync" },
+    { label: "Alertas", icon: Bell, href: "/alertas", badgeKey: "alerts" },
     { label: "Reportes", icon: BarChart3, href: "/reportes" },
 ];
 
@@ -39,11 +41,20 @@ export function Sidebar({ userEmail }: SidebarProps) {
     const pathname = usePathname();
     const router = useRouter();
     const [mobileOpen, setMobileOpen] = useState(false);
+    const [alertCount, setAlertCount] = useState(0);
 
     // Close mobile sidebar on route change
     useEffect(() => {
         setMobileOpen(false);
     }, [pathname]);
+
+    // Fetch alert count
+    useEffect(() => {
+        fetch("/api/stock/alerts")
+            .then((r) => r.ok ? r.json() : null)
+            .then((d) => d && setAlertCount(d.totalAlerts || 0))
+            .catch(() => { });
+    }, []);
 
     // Close on escape key
     useEffect(() => {
@@ -96,6 +107,7 @@ export function Sidebar({ userEmail }: SidebarProps) {
             <nav className="sidebar-nav">
                 {NAV_ITEMS.map((item) => {
                     const active = isActive(item.href);
+                    const badge = item.badgeKey === "alerts" ? alertCount : 0;
                     return (
                         <a
                             key={item.href}
@@ -108,6 +120,9 @@ export function Sidebar({ userEmail }: SidebarProps) {
                         >
                             <item.icon size={20} strokeWidth={1.5} />
                             <span>{item.label}</span>
+                            {badge > 0 && (
+                                <span className="alert-badge">{badge > 99 ? "99+" : badge}</span>
+                            )}
                         </a>
                     );
                 })}

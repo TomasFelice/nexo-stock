@@ -342,6 +342,7 @@ export type Database = {
                     price: number
                     product_id: number
                     sku: string | null
+                    stock_alert_threshold: number | null
                     stock_control: boolean
                     tn_variant_id: number | null
                     updated_at: string
@@ -357,6 +358,7 @@ export type Database = {
                     price?: number
                     product_id: number
                     sku?: string | null
+                    stock_alert_threshold?: number | null
                     stock_control?: boolean
                     tn_variant_id?: number | null
                     updated_at?: string
@@ -372,6 +374,7 @@ export type Database = {
                     price?: number
                     product_id?: number
                     sku?: string | null
+                    stock_alert_threshold?: number | null
                     stock_control?: boolean
                     tn_variant_id?: number | null
                     updated_at?: string
