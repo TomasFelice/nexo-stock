@@ -162,6 +162,33 @@ async function handleOrderSaleEvent(storeId: string, orderId: number, event: str
         return;
     }
 
+    // ── Create unified sale record ──────────────────────────────────────────
+    // This allows TN orders to appear in the sales report alongside POS sales.
+    const saleNumber = `TN-${order.number}`;
+    const customerName =
+        order.contact_name ||
+        [order.billing_address?.first_name, order.billing_address?.last_name].filter(Boolean).join(" ") ||
+        null;
+    const orderTotal = parseFloat(order.total) || 0;
+
+    const { data: createdSale, error: saleError } = await supabase
+        .from("sales")
+        .insert({
+            sale_number: saleNumber,
+            channel: "web",
+            payment_method: "tiendanube",
+            customer_name: customerName,
+            total: orderTotal,
+            status: "completed",
+        })
+        .select("id")
+        .single();
+
+    if (saleError) {
+        console.error("Failed to insert TN sale record:", saleError.message);
+        // Continue anyway — stock movements are still created
+    }
+
     // Process each product in the order
     for (const item of order.products) {
         const tnVariantId = item.variant_id;
@@ -172,7 +199,7 @@ async function handleOrderSaleEvent(storeId: string, orderId: number, event: str
         // Find variant in our DB by tn_variant_id
         const { data: variant } = await supabase
             .from("variants")
-            .select("id")
+            .select("id, price")
             .eq("tn_variant_id", tnVariantId)
             .maybeSingle();
 
@@ -180,6 +207,9 @@ async function handleOrderSaleEvent(storeId: string, orderId: number, event: str
             console.warn(`Variant with tn_variant_id ${tnVariantId} not found in DB`);
             continue;
         }
+
+        const unitPrice = parseFloat(item.price) || variant.price || 0;
+        const subtotal = unitPrice * quantityToDeduct;
 
         // Create stock movement of type 'venta'
         const { data: movement, error: movError } = await supabase
@@ -199,6 +229,24 @@ async function handleOrderSaleEvent(storeId: string, orderId: number, event: str
         if (movError) {
             console.error("Failed to insert stock_movement:", movError.message);
             continue;
+        }
+
+        // Create sale_item linked to the sale record (if created successfully)
+        if (createdSale) {
+            const { error: saleItemError } = await supabase
+                .from("sale_items")
+                .insert({
+                    sale_id: createdSale.id,
+                    variant_id: variant.id,
+                    warehouse_id: primaryWarehouse.id,
+                    quantity: quantityToDeduct,
+                    unit_price: unitPrice,
+                    subtotal,
+                });
+
+            if (saleItemError) {
+                console.error("Failed to insert sale_item for TN order:", saleItemError.message);
+            }
         }
 
         // Update stock_levels
@@ -226,7 +274,7 @@ async function handleOrderSaleEvent(storeId: string, orderId: number, event: str
         );
     }
 
-    console.log(`✅ Order #${order.number} sale processed successfully.`);
+    console.log(`✅ Order #${order.number} sale processed successfully (sale record: ${createdSale?.id ?? "n/a"}).`);
 }
 
 /**
@@ -327,4 +375,10 @@ async function handleOrderCancelledEvent(storeId: string, orderId: number, event
     }
 
     console.log(`✅ Order #${order.number} cancellation processed — ${ventaMovements.length} venta movement(s) reverted.`);
+
+    // Also mark the unified sales record as cancelled (if it exists)
+    await supabase
+        .from("sales")
+        .update({ status: "cancelled" })
+        .eq("sale_number", `TN-${order.number}`);
 }

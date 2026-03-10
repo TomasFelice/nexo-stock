@@ -20,42 +20,37 @@ export async function GET() {
         totalStockRes,
         lastSyncRes,
         movementsMonthRes,
-        // TN webhook sales
-        tnSalesTodayRes,
-        tnSalesWeekRes,
-        tnSalesMonthRes,
-        tnSalesByDayRes,
     ] = await Promise.all([
-        // Sales today (POS)
+        // Sales today (all channels)
         supabase
             .from("sales")
-            .select("total")
+            .select("total, channel")
             .eq("status", "completed")
             .gte("created_at", startOfToday),
 
-        // Sales this week (POS)
+        // Sales this week (all channels)
         supabase
             .from("sales")
-            .select("total")
+            .select("total, channel")
             .eq("status", "completed")
             .gte("created_at", startOfWeek),
 
-        // Sales this month (POS)
+        // Sales this month (all channels)
         supabase
             .from("sales")
-            .select("total")
+            .select("total, channel")
             .eq("status", "completed")
             .gte("created_at", startOfMonth),
 
-        // Sales by day last 7 days (POS)
+        // Sales by day last 7 days (all channels)
         supabase
             .from("sales")
-            .select("created_at, total")
+            .select("created_at, total, channel")
             .eq("status", "completed")
             .gte("created_at", sevenDaysAgo)
             .order("created_at", { ascending: true }),
 
-        // Top 5 products by revenue
+        // Top 5 products by revenue (all sale_items — POS + TN)
         supabase
             .from("sale_items")
             .select("variant_id, quantity, subtotal, variants(sku, attribute_values, products(name))")
@@ -86,87 +81,48 @@ export async function GET() {
             .from("stock_movements")
             .select("id", { count: "exact", head: true })
             .gte("created_at", startOfMonth),
-
-        // TN webhook sales today
-        supabase
-            .from("stock_movements")
-            .select("quantity, variants(price)")
-            .eq("movement_type", "venta")
-            .like("reference", "TN Order #%")
-            .gte("created_at", startOfToday),
-
-        // TN webhook sales this week
-        supabase
-            .from("stock_movements")
-            .select("quantity, variants(price)")
-            .eq("movement_type", "venta")
-            .like("reference", "TN Order #%")
-            .gte("created_at", startOfWeek),
-
-        // TN webhook sales this month
-        supabase
-            .from("stock_movements")
-            .select("quantity, variants(price)")
-            .eq("movement_type", "venta")
-            .like("reference", "TN Order #%")
-            .gte("created_at", startOfMonth),
-
-        // TN webhook sales by day (last 7 days)
-        supabase
-            .from("stock_movements")
-            .select("created_at, quantity, variants(price)")
-            .eq("movement_type", "venta")
-            .like("reference", "TN Order #%")
-            .gte("created_at", sevenDaysAgo)
-            .order("created_at", { ascending: true }),
     ]);
 
-    /** Sum TN movements as revenue: quantity × variant.price */
-    function sumTnRevenue(rows: { quantity: number; variants: unknown }[] | null) {
-        return (rows || []).reduce((acc, row) => {
-            const price = Number((row.variants as any)?.price ?? 0);
-            return acc + row.quantity * price;
-        }, 0);
+    // ── Helper: sum totals by channel ──────────────────────────────────────
+    function sumByChannel(rows: { total: unknown; channel: string }[] | null) {
+        let local = 0, web = 0;
+        for (const r of rows || []) {
+            const v = Number(r.total);
+            if (r.channel === "web") web += v;
+            else local += v;
+        }
+        return { total: local + web, local, web };
     }
 
-    // Aggregate sales totals (POS + TN webhook)
-    const salesToday =
-        (salesTodayRes.data || []).reduce((s, r) => s + Number(r.total), 0) +
-        sumTnRevenue(tnSalesTodayRes.data as any);
-    const salesWeek =
-        (salesWeekRes.data || []).reduce((s, r) => s + Number(r.total), 0) +
-        sumTnRevenue(tnSalesWeekRes.data as any);
-    const salesMonth =
-        (salesMonthRes.data || []).reduce((s, r) => s + Number(r.total), 0) +
-        sumTnRevenue(tnSalesMonthRes.data as any);
+    const today = sumByChannel(salesTodayRes.data as any);
+    const week = sumByChannel(salesWeekRes.data as any);
+    const month = sumByChannel(salesMonthRes.data as any);
 
-    // Build sales by day — seed all 7 days with 0
-    const dayMap: Record<string, number> = {};
+    // ── Sales trend by day, split by channel ──────────────────────────────
+    const dayMapLocal: Record<string, number> = {};
+    const dayMapWeb: Record<string, number> = {};
     for (let i = 6; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
         const key = d.toISOString().slice(0, 10);
-        dayMap[key] = 0;
+        dayMapLocal[key] = 0;
+        dayMapWeb[key] = 0;
     }
-    // Add POS sales
-    for (const sale of salesByDayRes.data || []) {
-        const key = sale.created_at.slice(0, 10);
-        if (key in dayMap) dayMap[key] += Number(sale.total);
+    for (const sale of (salesByDayRes.data as any) || []) {
+        const key = (sale.created_at as string).slice(0, 10);
+        if (!(key in dayMapLocal)) continue;
+        const v = Number(sale.total);
+        if (sale.channel === "web") dayMapWeb[key] += v;
+        else dayMapLocal[key] += v;
     }
-    // Add TN webhook sales
-    for (const mov of (tnSalesByDayRes.data as any) || []) {
-        const key = (mov.created_at as string).slice(0, 10);
-        if (key in dayMap) {
-            const price = Number((mov.variants as any)?.price ?? 0);
-            dayMap[key] += mov.quantity * price;
-        }
-    }
-    const salesByDay = Object.entries(dayMap).map(([date, total]) => ({
+    const salesByDay = Object.keys(dayMapLocal).map((date) => ({
         date,
         label: new Date(date + "T12:00:00").toLocaleDateString("es-AR", { weekday: "short", day: "numeric" }),
-        total,
+        total: dayMapLocal[date] + dayMapWeb[date],
+        local: dayMapLocal[date],
+        web: dayMapWeb[date],
     }));
 
-    // Aggregate top products
+    // ── Top products (from sale_items — includes both POS and TN) ─────────
     const productMap: Record<string, { name: string; revenue: number; units: number }> = {};
     for (const item of topProductsRes.data || []) {
         const v = item.variants as any;
@@ -181,7 +137,7 @@ export async function GET() {
         .sort((a, b) => b.revenue - a.revenue)
         .slice(0, 5);
 
-    // Stock by warehouse
+    // ── Stock by warehouse ─────────────────────────────────────────────────
     const warehouseMap: Record<string, { name: string; id: number; total: number }> = {};
     for (const sl of stockByWarehouseRes.data || []) {
         const wh = sl.warehouses as any;
@@ -197,9 +153,18 @@ export async function GET() {
     const movementsThisMonth = movementsMonthRes.count || 0;
 
     return NextResponse.json({
-        salesToday,
-        salesWeek,
-        salesMonth,
+        // Combined totals
+        salesToday: today.total,
+        salesWeek: week.total,
+        salesMonth: month.total,
+        // Channel breakdown
+        salesTodayLocal: today.local,
+        salesTodayWeb: today.web,
+        salesWeekLocal: week.local,
+        salesWeekWeb: week.web,
+        salesMonthLocal: month.local,
+        salesMonthWeb: month.web,
+        // Charts
         salesByDay,
         topProducts,
         stockByWarehouse,

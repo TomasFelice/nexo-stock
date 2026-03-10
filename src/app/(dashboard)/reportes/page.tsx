@@ -38,6 +38,7 @@ export default function ReportesPage() {
     const [toDate, setToDate] = useState("");
     const [warehouseId, setWarehouseId] = useState("");
     const [movType, setMovType] = useState("");
+    const [channel, setChannel] = useState("");
 
     // Data & pagination
     const [data, setData] = useState<any[]>([]);
@@ -63,6 +64,7 @@ export default function ReportesPage() {
         if (toDate) params.set("to", toDate);
         if (warehouseId) params.set("warehouse_id", warehouseId);
         if (tabName === "movimientos" && movType) params.set("type", movType);
+        if (tabName === "ventas" && channel) params.set("channel", channel);
         if (exportCsv) params.set("export", "csv");
         if (!exportCsv) {
             params.set("page", String(page));
@@ -75,7 +77,7 @@ export default function ReportesPage() {
             stock: `/api/reports/stock`,
         };
         return `${endpoints[tabName]}?${params.toString()}`;
-    }, [fromDate, toDate, warehouseId, movType, page]);
+    }, [fromDate, toDate, warehouseId, movType, channel, page]);
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -198,6 +200,18 @@ export default function ReportesPage() {
                     ))}
                 </select>
 
+                {tab === "ventas" && (
+                    <select
+                        value={channel}
+                        onChange={(e) => setChannel(e.target.value)}
+                        style={{ fontSize: "0.8125rem", padding: "0.375rem 0.5rem", border: "1px solid var(--color-border)", borderRadius: "6px", fontFamily: "inherit", background: "white" }}
+                    >
+                        <option value="">Todos los canales</option>
+                        <option value="local">Local (POS)</option>
+                        <option value="web">Tiendanube</option>
+                    </select>
+                )}
+
                 {tab === "movimientos" && (
                     <select
                         value={movType}
@@ -306,6 +320,25 @@ function formatDate(iso: string) {
     return new Date(iso).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+const CHANNEL_BADGE: Record<string, { label: string; color: string; bg: string }> = {
+    local: { label: "Local", color: "#1d4ed8", bg: "#dbeafe" },
+    web: { label: "Tiendanube", color: "#6d28d9", bg: "#ede9fe" },
+};
+
+function ChannelBadge({ channel }: { channel?: string }) {
+    const cfg = CHANNEL_BADGE[channel ?? ""] ?? { label: channel || "—", color: "#6b7280", bg: "#f3f4f6" };
+    return (
+        <span style={{
+            fontSize: "0.7rem", fontWeight: 600,
+            color: cfg.color, background: cfg.bg,
+            padding: "2px 8px", borderRadius: "999px",
+            whiteSpace: "nowrap",
+        }}>
+            {cfg.label}
+        </span>
+    );
+}
+
 function SalesTable({ rows }: { rows: any[] }) {
     return (
         <table className="stock-table">
@@ -313,6 +346,7 @@ function SalesTable({ rows }: { rows: any[] }) {
                 <tr>
                     <th className="stock-th">N° Venta</th>
                     <th className="stock-th">Fecha</th>
+                    <th className="stock-th">Canal</th>
                     <th className="stock-th">Cliente</th>
                     <th className="stock-th">Producto</th>
                     <th className="stock-th">Variante</th>
@@ -327,6 +361,7 @@ function SalesTable({ rows }: { rows: any[] }) {
                     <tr key={i} className="stock-row">
                         <td className="stock-td"><code style={{ fontSize: "0.75rem" }}>{r.sale_number}</code></td>
                         <td className="stock-td" style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", whiteSpace: "nowrap" }}>{r.date ? formatDate(r.date) : "—"}</td>
+                        <td className="stock-td"><ChannelBadge channel={r.channel} /></td>
                         <td className="stock-td">{r.customer}</td>
                         <td className="stock-td stock-product-name">{r.product}</td>
                         <td className="stock-td" style={{ fontSize: "0.8125rem", color: "var(--color-text-secondary)" }}>{r.variant}</td>

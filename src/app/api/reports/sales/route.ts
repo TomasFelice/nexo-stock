@@ -6,6 +6,7 @@ export async function GET(req: NextRequest) {
     const from = searchParams.get("from");
     const to = searchParams.get("to");
     const warehouseId = searchParams.get("warehouse_id");
+    const channel = searchParams.get("channel");
     const exportCsv = searchParams.get("export") === "csv";
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "50");
@@ -27,6 +28,7 @@ export async function GET(req: NextRequest) {
         .order("id", { ascending: false });
 
     if (warehouseId) query = query.eq("warehouse_id", parseInt(warehouseId));
+    if (channel) query = query.eq("sales.channel", channel);
 
     if (from) query = query.gte("sales.created_at", from + "T00:00:00");
     if (to) query = query.lte("sales.created_at", to + "T23:59:59");

@@ -18,16 +18,23 @@ import {
     ShoppingCart,
     Package,
     ArrowLeftRight,
-    RefreshCw,
     Loader2,
     AlertTriangle,
+    Store,
+    Globe,
 } from "lucide-react";
 
 interface KpiData {
     salesToday: number;
     salesWeek: number;
     salesMonth: number;
-    salesByDay: { date: string; label: string; total: number }[];
+    salesTodayLocal: number;
+    salesTodayWeb: number;
+    salesWeekLocal: number;
+    salesWeekWeb: number;
+    salesMonthLocal: number;
+    salesMonthWeb: number;
+    salesByDay: { date: string; label: string; total: number; local: number; web: number }[];
     topProducts: { name: string; revenue: number; units: number }[];
     stockByWarehouse: { name: string; id: number; total: number }[];
     totalStock: number;
@@ -113,23 +120,29 @@ export default function DashboardPage() {
                 </p>
             </div>
 
-            {/* ── KPI Cards ── */}
+            {/* ── KPI Cards — totales ── */}
             <div className="dashboard-kpi-grid">
                 <KpiCard
                     label="Ventas hoy"
                     value={formatCurrency(data.salesToday)}
+                    subLocal={formatCurrency(data.salesTodayLocal)}
+                    subWeb={formatCurrency(data.salesTodayWeb)}
                     icon={<ShoppingCart size={20} strokeWidth={1.5} />}
                     accent="#3b82f6"
                 />
                 <KpiCard
                     label="Ventas esta semana"
                     value={formatCurrency(data.salesWeek)}
+                    subLocal={formatCurrency(data.salesWeekLocal)}
+                    subWeb={formatCurrency(data.salesWeekWeb)}
                     icon={<TrendingUp size={20} strokeWidth={1.5} />}
                     accent="#10b981"
                 />
                 <KpiCard
                     label="Ventas este mes"
                     value={formatCurrency(data.salesMonth)}
+                    subLocal={formatCurrency(data.salesMonthLocal)}
+                    subWeb={formatCurrency(data.salesMonthWeb)}
                     icon={<TrendingUp size={20} strokeWidth={1.5} />}
                     accent="#f59e0b"
                 />
@@ -147,20 +160,52 @@ export default function DashboardPage() {
                 />
             </div>
 
+            {/* ── Channel mini-summary ── */}
+            {(data.salesMonthLocal > 0 || data.salesMonthWeb > 0) && (
+                <div style={{
+                    display: "flex", gap: "0.875rem", marginBottom: "1.25rem", flexWrap: "wrap",
+                }}>
+                    <ChannelPill
+                        icon={<Store size={13} />}
+                        label="Local"
+                        value={formatCurrency(data.salesMonthLocal)}
+                        pct={data.salesMonth > 0 ? Math.round((data.salesMonthLocal / data.salesMonth) * 100) : 0}
+                        color="#1d4ed8"
+                        bg="#dbeafe"
+                    />
+                    <ChannelPill
+                        icon={<Globe size={13} />}
+                        label="Tiendanube"
+                        value={formatCurrency(data.salesMonthWeb)}
+                        pct={data.salesMonth > 0 ? Math.round((data.salesMonthWeb / data.salesMonth) * 100) : 0}
+                        color="#6d28d9"
+                        bg="#ede9fe"
+                    />
+                </div>
+            )}
+
             {/* ── Charts Row ── */}
             <div className="dashboard-charts-row">
-                {/* Sales trend */}
+                {/* Sales trend — stacked by channel */}
                 <div className="dashboard-chart-card">
                     <div className="dashboard-chart-header">
                         <h2 className="dashboard-chart-title">Ventas — últimos 7 días</h2>
+                        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+                            <LegendDot color="#1d4ed8" label="Local" />
+                            <LegendDot color="#7c3aed" label="Tiendanube" />
+                        </div>
                     </div>
                     <div style={{ height: 220 }}>
                         <ResponsiveContainer width="100%" height="100%">
                             <AreaChart data={data.salesByDay} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
                                 <defs>
-                                    <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25} />
-                                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                                    <linearGradient id="localGrad" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#1d4ed8" stopOpacity={0.25} />
+                                        <stop offset="95%" stopColor="#1d4ed8" stopOpacity={0} />
+                                    </linearGradient>
+                                    <linearGradient id="webGrad" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.3} />
+                                        <stop offset="95%" stopColor="#7c3aed" stopOpacity={0} />
                                     </linearGradient>
                                 </defs>
                                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -178,16 +223,29 @@ export default function DashboardPage() {
                                     width={48}
                                 />
                                 <Tooltip
-                                    formatter={(v: unknown) => [formatCurrency(Number(v)), "Ventas"]}
+                                    formatter={(v: unknown, name: unknown) => [
+                                        formatCurrency(Number(v)),
+                                        name === "local" ? "Local" : "Tiendanube",
+                                    ]}
                                     contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
                                 />
                                 <Area
                                     type="monotone"
-                                    dataKey="total"
-                                    stroke="#3b82f6"
+                                    dataKey="local"
+                                    stackId="1"
+                                    stroke="#1d4ed8"
                                     strokeWidth={2}
-                                    fill="url(#salesGrad)"
-                                    dot={{ r: 3, fill: "#3b82f6" }}
+                                    fill="url(#localGrad)"
+                                    dot={false}
+                                />
+                                <Area
+                                    type="monotone"
+                                    dataKey="web"
+                                    stackId="1"
+                                    stroke="#7c3aed"
+                                    strokeWidth={2}
+                                    fill="url(#webGrad)"
+                                    dot={false}
                                 />
                             </AreaChart>
                         </ResponsiveContainer>
@@ -246,7 +304,7 @@ export default function DashboardPage() {
                 <div className="dashboard-chart-card" style={{ marginTop: "1.25rem" }}>
                     <div className="dashboard-chart-header">
                         <h2 className="dashboard-chart-title">Productos más vendidos</h2>
-                        <span className="text-xs text-gray-400">últimas ventas registradas</span>
+                        <span className="text-xs text-gray-400">últimas ventas registradas · todos los canales</span>
                     </div>
                     <div className="dashboard-top-products">
                         {data.topProducts.map((p, i) => (
@@ -264,14 +322,53 @@ export default function DashboardPage() {
     );
 }
 
+// ── Sub-components ──────────────────────────────────────────────────────────
+
+function LegendDot({ color, label }: { color: string; label: string }) {
+    return (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.75rem", color: "#6b7280" }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+            {label}
+        </div>
+    );
+}
+
+function ChannelPill({
+    icon, label, value, pct, color, bg,
+}: {
+    icon: React.ReactNode;
+    label: string;
+    value: string;
+    pct: number;
+    color: string;
+    bg: string;
+}) {
+    return (
+        <div style={{
+            display: "flex", alignItems: "center", gap: "0.5rem",
+            background: bg, border: `1px solid ${color}30`,
+            borderRadius: "8px", padding: "0.45rem 0.875rem",
+        }}>
+            <span style={{ color, display: "flex" }}>{icon}</span>
+            <span style={{ fontSize: "0.8125rem", fontWeight: 600, color }}>{label}</span>
+            <span style={{ fontSize: "0.8125rem", fontWeight: 700, color: "#111827" }}>{value}</span>
+            <span style={{ fontSize: "0.75rem", color: "#6b7280" }}>({pct}%)</span>
+        </div>
+    );
+}
+
 function KpiCard({
     label,
     value,
+    subLocal,
+    subWeb,
     icon,
     accent,
 }: {
     label: string;
     value: string;
+    subLocal?: string;
+    subWeb?: string;
     icon: React.ReactNode;
     accent: string;
 }) {
@@ -280,9 +377,23 @@ function KpiCard({
             <div className="dashboard-kpi-icon" style={{ color: accent, background: accent + "15" }}>
                 {icon}
             </div>
-            <div>
+            <div style={{ flex: 1 }}>
                 <div className="dashboard-kpi-label">{label}</div>
                 <div className="dashboard-kpi-value">{value}</div>
+                {(subLocal !== undefined || subWeb !== undefined) && (
+                    <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.25rem", flexWrap: "wrap" }}>
+                        {subLocal !== undefined && (
+                            <span style={{ fontSize: "0.7rem", color: "#1d4ed8", background: "#dbeafe", padding: "1px 6px", borderRadius: "999px", fontWeight: 600 }}>
+                                Local {subLocal}
+                            </span>
+                        )}
+                        {subWeb !== undefined && (
+                            <span style={{ fontSize: "0.7rem", color: "#6d28d9", background: "#ede9fe", padding: "1px 6px", borderRadius: "999px", fontWeight: 600 }}>
+                                TN {subWeb}
+                            </span>
+                        )}
+                    </div>
+                )}
             </div>
         </div>
     );

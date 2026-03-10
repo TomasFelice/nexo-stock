@@ -12,6 +12,9 @@ export const metadata: Metadata = {
   title: "NexoStock — Gestión de Inventario",
   description:
     "Sistema de gestión de inventario multi-depósito con sincronización Tiendanube",
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({

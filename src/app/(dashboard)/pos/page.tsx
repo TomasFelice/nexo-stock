@@ -26,6 +26,7 @@ import {
     ChevronUp,
     RefreshCw,
     Check,
+    Pencil,
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────
@@ -185,6 +186,14 @@ export default function POSPage() {
     const [exchangeSuccess, setExchangeSuccess] = useState("");
     const exchangeSearchTimeout = useRef<NodeJS.Timeout | null>(null);
 
+    // ── Price override state ──
+    const [editingPriceIdx, setEditingPriceIdx] = useState<number | null>(null);
+    const [editPriceValue, setEditPriceValue] = useState("");
+    const priceInputRef = useRef<HTMLInputElement>(null);
+
+    // ── Payment discounts state ──
+    const [paymentDiscounts, setPaymentDiscounts] = useState<Record<string, { enabled: boolean; percentage: number }>>({});
+
     // ── Exchange history state ──
     const [exchangeHistoryOpen, setExchangeHistoryOpen] = useState(false);
     const [exchangeHistoryData, setExchangeHistoryData] = useState<ExchangeHistoryData | null>(null);
@@ -212,6 +221,11 @@ export default function POSPage() {
     // Initial load
     useEffect(() => {
         doSearch("");
+        // Load payment discount rules
+        fetch("/api/settings/payment-discounts")
+            .then((r) => r.ok ? r.json() : null)
+            .then((data) => { if (data?.discounts) setPaymentDiscounts(data.discounts); })
+            .catch(() => {});
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -555,6 +569,28 @@ export default function POSPage() {
         setCart(cart.filter((_, i) => i !== index));
     }
 
+    function startEditPrice(index: number) {
+        setEditingPriceIdx(index);
+        setEditPriceValue(cart[index].price.toString());
+        setTimeout(() => priceInputRef.current?.select(), 50);
+    }
+
+    function saveCartPrice() {
+        if (editingPriceIdx === null) return;
+        const numVal = parseFloat(editPriceValue);
+        if (!isNaN(numVal) && numVal >= 0) {
+            const updated = [...cart];
+            updated[editingPriceIdx].price = numVal;
+            setCart(updated);
+        }
+        setEditingPriceIdx(null);
+    }
+
+    function handlePriceKeyDown(e: React.KeyboardEvent) {
+        if (e.key === "Enter") { e.preventDefault(); saveCartPrice(); }
+        else if (e.key === "Escape") setEditingPriceIdx(null);
+    }
+
     function clearCart() {
         setCart([]);
         setPaymentMethod("efectivo");
@@ -630,8 +666,12 @@ export default function POSPage() {
         });
     }
 
-    const cartTotal = cart.reduce((sum, item) => sum + item.quantity * item.price, 0);
+    const cartSubtotal = cart.reduce((sum, item) => sum + item.quantity * item.price, 0);
     const cartItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+    const activeDiscount = paymentDiscounts[paymentMethod];
+    const discountPct = activeDiscount?.enabled ? activeDiscount.percentage : 0;
+    const discountAmount = cartSubtotal * (discountPct / 100);
+    const cartTotal = cartSubtotal - discountAmount;
 
     // ── Render ──
 
@@ -817,9 +857,32 @@ export default function POSPage() {
                                                         <Plus size={14} />
                                                     </button>
                                                 </div>
-                                                <span className="pos-cart-item-price">
-                                                    {formatCurrency(item.price * item.quantity)}
-                                                </span>
+                                                {editingPriceIdx === index ? (
+                                                    <div className="pos-price-edit">
+                                                        <span className="pos-price-edit-prefix">$</span>
+                                                        <input
+                                                            ref={priceInputRef}
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.01"
+                                                            className="pos-price-edit-input"
+                                                            value={editPriceValue}
+                                                            onChange={(e) => setEditPriceValue(e.target.value)}
+                                                            onKeyDown={handlePriceKeyDown}
+                                                            onBlur={saveCartPrice}
+                                                            autoFocus
+                                                        />
+                                                    </div>
+                                                ) : (
+                                                    <span
+                                                        className="pos-cart-item-price pos-cart-item-price-editable"
+                                                        onClick={() => startEditPrice(index)}
+                                                        title="Click para editar precio"
+                                                    >
+                                                        {formatCurrency(item.price * item.quantity)}
+                                                        <Pencil size={10} className="pos-price-edit-icon" />
+                                                    </span>
+                                                )}
                                                 <button
                                                     className="pos-cart-item-remove"
                                                     onClick={() => removeFromCart(index)}
@@ -852,17 +915,24 @@ export default function POSPage() {
                                 <div className="pos-payment-section">
                                     <label className="pos-section-label">Medio de pago</label>
                                     <div className="pos-payment-grid">
-                                        {PAYMENT_METHODS.map((pm) => (
-                                            <button
-                                                key={pm.value}
-                                                type="button"
-                                                className={`pos-payment-option ${paymentMethod === pm.value ? "pos-payment-active" : ""}`}
-                                                onClick={() => setPaymentMethod(pm.value)}
-                                            >
-                                                <pm.icon size={16} strokeWidth={1.5} />
-                                                <span>{pm.label}</span>
-                                            </button>
-                                        ))}
+                                        {PAYMENT_METHODS.map((pm) => {
+                                            const disc = paymentDiscounts[pm.value];
+                                            const hasDsc = disc?.enabled && disc.percentage > 0;
+                                            return (
+                                                <button
+                                                    key={pm.value}
+                                                    type="button"
+                                                    className={`pos-payment-option ${paymentMethod === pm.value ? "pos-payment-active" : ""}`}
+                                                    onClick={() => setPaymentMethod(pm.value)}
+                                                >
+                                                    <pm.icon size={16} strokeWidth={1.5} />
+                                                    <span>{pm.label}</span>
+                                                    {hasDsc && (
+                                                        <span className="pos-payment-discount-badge">-{disc.percentage}%</span>
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
                                     </div>
                                 </div>
 
@@ -883,6 +953,18 @@ export default function POSPage() {
 
                                 {/* Total + Confirm */}
                                 <div className="pos-cart-footer">
+                                    {discountPct > 0 && (
+                                        <div className="pos-cart-breakdown">
+                                            <div className="pos-cart-breakdown-row">
+                                                <span>Subtotal</span>
+                                                <span>{formatCurrency(cartSubtotal)}</span>
+                                            </div>
+                                            <div className="pos-cart-breakdown-row pos-cart-breakdown-discount">
+                                                <span>Dto. {PAYMENT_LABELS[paymentMethod]} (-{discountPct}%)</span>
+                                                <span>-{formatCurrency(discountAmount)}</span>
+                                            </div>
+                                        </div>
+                                    )}
                                     <div className="pos-cart-total">
                                         <span>Total</span>
                                         <span className="pos-cart-total-amount">

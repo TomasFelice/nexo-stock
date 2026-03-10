@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Package, Eye, EyeOff, Loader2, ArrowRight } from "lucide-react";
+import { Eye, EyeOff, Loader2, ArrowRight } from "lucide-react";
+import Image from "next/image";
 
 type AuthMode = "login" | "signup";
 
@@ -87,9 +88,9 @@ export default function LoginPage() {
                 {/* ── Logo ── */}
                 <div className="login-logo">
                     <div className="login-logo-icon">
-                        <Package size={24} color="white" strokeWidth={1.5} />
+                        <Image src="/nexo-stock-logo.webp" alt="Logo" width={100} height={100} />
                     </div>
-                    <h1 className="login-title">NexoStock</h1>
+                    <h1 className="login-title"><strong>nexo</strong>stock</h1>
                     <p className="login-subtitle">
                         {mode === "login"
                             ? "Iniciá sesión para continuar"

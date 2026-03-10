@@ -100,7 +100,7 @@ export default function SyncDashboardPage() {
             <div className="page-header">
                 <div className="page-header-row">
                     <RefreshCcw size={24} strokeWidth={1.5} className="page-header-icon" />
-                    <h1 className="page-title">Sincronización NexoStock → Tiendanube</h1>
+                    <h1 className="page-title">Sincronización <strong>nexo</strong>stock → Tiendanube</h1>
                 </div>
                 <p className="page-subtitle">
                     Supervisa y gestiona el flujo de stock desde tus depósitos hacia tu tienda web.

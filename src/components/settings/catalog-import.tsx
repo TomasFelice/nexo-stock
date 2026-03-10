@@ -119,7 +119,7 @@ export function CatalogImport() {
                 <AlertTriangle size={16} />
                 <div>
                     <strong>No se importarán cantidades de stock</strong> para preservar
-                    el stock existente en NexoStock.
+                    el stock existente en <strong>nexo</strong>stock.
                 </div>
             </div>
 

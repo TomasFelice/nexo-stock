@@ -98,28 +98,10 @@ export async function processSyncQueue(batchSize = 30) {
         const startTime = Date.now();
 
         try {
-            if (item.action !== "update_stock") {
-                throw new Error(`Unsupported action: ${item.action}`);
-            }
-
-            // Sum the stock_levels across all warehouses where syncs_to_web = true
-            const { data: stockData, error: stockError } = await supabase
-                .from("stock_levels")
-                .select("quantity, warehouses!inner(id, syncs_to_web)")
-                .eq("variant_id", item.variant_id)
-                .eq("warehouses.syncs_to_web", true);
-
-            if (stockError) throw stockError;
-
-            const totalWebStock = stockData?.reduce(
-                (sum, stock) => sum + stock.quantity,
-                0
-            ) || 0;
-
-            // Fetch tn_variant_id and tn_product_id
+            // Fetch tn_variant_id and tn_product_id (needed for both actions)
             const { data: variantData, error: variantError } = await supabase
                 .from("variants")
-                .select("tn_variant_id, product_id, products(tn_product_id)")
+                .select("tn_variant_id, price, compare_at_price, product_id, products(tn_product_id)")
                 .eq("id", item.variant_id)
                 .single();
 
@@ -129,6 +111,7 @@ export async function processSyncQueue(batchSize = 30) {
 
             if (!variantData.tn_variant_id || !productsInfo?.tn_product_id) {
                 const durationMs = Date.now() - startTime;
+                const eventType = item.action === "update_price" ? "price_update" : "stock_update";
                 await supabase
                     .from("sync_queue")
                     .update({
@@ -140,7 +123,7 @@ export async function processSyncQueue(batchSize = 30) {
 
                 await supabase.from("sync_log").insert({
                     direction: "outbound",
-                    event_type: "stock_update",
+                    event_type: eventType,
                     status: "success",
                     duration_ms: durationMs,
                     payload: {
@@ -155,11 +138,43 @@ export async function processSyncQueue(batchSize = 30) {
             }
 
             const productId = productsInfo.tn_product_id;
-            const variantId = variantData.tn_variant_id;
-            const requestPayload = { stock: totalWebStock };
+            const tnVariantId = variantData.tn_variant_id;
+
+            let requestPayload: Record<string, any>;
+            let eventType: string;
+
+            if (item.action === "update_price") {
+                // ── Price sync ──
+                requestPayload = {
+                    price: variantData.price?.toString() || "0",
+                };
+                if (variantData.compare_at_price) {
+                    requestPayload.compare_at_price = variantData.compare_at_price.toString();
+                }
+                eventType = "price_update";
+            } else if (item.action === "update_stock") {
+                // ── Stock sync ──
+                const { data: stockData, error: stockError } = await supabase
+                    .from("stock_levels")
+                    .select("quantity, warehouses!inner(id, syncs_to_web)")
+                    .eq("variant_id", item.variant_id)
+                    .eq("warehouses.syncs_to_web", true);
+
+                if (stockError) throw stockError;
+
+                const totalWebStock = stockData?.reduce(
+                    (sum, stock) => sum + stock.quantity,
+                    0
+                ) || 0;
+
+                requestPayload = { stock: totalWebStock };
+                eventType = "stock_update";
+            } else {
+                throw new Error(`Unsupported action: ${item.action}`);
+            }
 
             // Call tiendanubeClient.updateVariant and capture response
-            const tnResponse = await tnClient.updateVariant(productId, variantId, requestPayload);
+            const tnResponse = await tnClient.updateVariant(productId, tnVariantId, requestPayload);
             const durationMs = Date.now() - startTime;
 
             // Update the sync_queue item with completed
@@ -175,15 +190,15 @@ export async function processSyncQueue(batchSize = 30) {
             // Log success with request/response and duration
             await supabase.from("sync_log").insert({
                 direction: "outbound",
-                event_type: "stock_update",
+                event_type: eventType,
                 status: "success",
                 duration_ms: durationMs,
                 payload: {
                     variant_id: item.variant_id,
-                    new_stock: totalWebStock,
+                    ...(eventType === "stock_update" ? { new_stock: requestPayload.stock } : { new_price: requestPayload.price }),
                     request: {
                         tn_product_id: productId,
-                        tn_variant_id: variantId,
+                        tn_variant_id: tnVariantId,
                         body: requestPayload,
                     },
                     response: tnResponse,
@@ -195,6 +210,7 @@ export async function processSyncQueue(batchSize = 30) {
             const durationMs = Date.now() - startTime;
             const newRetryCount = item.retry_count + 1;
             const isFinalAttempt = newRetryCount >= MAX_RETRY_COUNT;
+            const eventType = item.action === "update_price" ? "price_update" : "stock_update";
 
             // If max retries reached, mark as dead_letter; otherwise keep as failed for future retry
             await supabase
@@ -209,7 +225,7 @@ export async function processSyncQueue(batchSize = 30) {
 
             await supabase.from("sync_log").insert({
                 direction: "outbound",
-                event_type: "stock_update",
+                event_type: eventType,
                 status: "error",
                 duration_ms: durationMs,
                 error_details: error.message || "Unknown error",

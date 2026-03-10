@@ -15,12 +15,14 @@ import {
     X,
     Menu,
     Bell,
+    DollarSign,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 
 const NAV_ITEMS = [
     { label: "Dashboard", icon: LayoutDashboard, href: "/" },
     { label: "Productos", icon: Package, href: "/productos" },
+    { label: "Precios", icon: DollarSign, href: "/precios" },
     { label: "Depósitos", icon: Warehouse, href: "/depositos" },
     { label: "Movimientos", icon: ArrowLeftRight, href: "/movimientos" },
     { label: "Punto de Venta", icon: ShoppingCart, href: "/pos" },
@@ -88,10 +90,7 @@ export function Sidebar({ userEmail }: SidebarProps) {
         <>
             {/* ── Logo ── */}
             <div className="sidebar-logo">
-                <div className="sidebar-logo-icon">
-                    <Package size={20} color="white" strokeWidth={1.5} />
-                </div>
-                <span className="sidebar-logo-text">NexoStock</span>
+                <span className="sidebar-logo-text"><strong>nexo</strong>stock</span>
 
                 {/* Mobile close button */}
                 <button
@@ -166,6 +165,19 @@ export function Sidebar({ userEmail }: SidebarProps) {
                 >
                     <LogOut size={18} strokeWidth={1.5} />
                 </button>
+            </div>
+
+            {/* ── Benai Agency credit ── */}
+            <div className="sidebar-footer">
+                <span>Hecho por</span>
+                <a
+                    href="https://benai-bice.vercel.app/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="sidebar-footer-link"
+                >
+                    Benai Agency
+                </a>
             </div>
         </>
     );

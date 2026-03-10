@@ -32,6 +32,50 @@ export type Database = {
                 }
                 Relationships: []
             }
+            price_history: {
+                Row: {
+                    change_type: string
+                    created_at: string
+                    field: string
+                    id: number
+                    new_value: number
+                    old_value: number | null
+                    rule_description: string | null
+                    user_id: string | null
+                    variant_id: number
+                }
+                Insert: {
+                    change_type: string
+                    created_at?: string
+                    field: string
+                    id?: never
+                    new_value: number
+                    old_value?: number | null
+                    rule_description?: string | null
+                    user_id?: string | null
+                    variant_id: number
+                }
+                Update: {
+                    change_type?: string
+                    created_at?: string
+                    field?: string
+                    id?: never
+                    new_value?: number
+                    old_value?: number | null
+                    rule_description?: string | null
+                    user_id?: string | null
+                    variant_id?: number
+                }
+                Relationships: [
+                    {
+                        foreignKeyName: "price_history_variant_id_fkey"
+                        columns: ["variant_id"]
+                        isOneToOne: false
+                        referencedRelation: "variants"
+                        referencedColumns: ["id"]
+                    },
+                ]
+            }
             products: {
                 Row: {
                     active: boolean

@@ -1,6 +1,7 @@
 import { Settings } from "lucide-react";
 import { TiendanubeConnection } from "@/components/settings/tiendanube-connection";
 import { CatalogImport } from "@/components/settings/catalog-import";
+import { PaymentDiscounts } from "@/components/settings/payment-discounts";
 
 export default function ConfiguracionPage() {
     return (
@@ -11,13 +12,14 @@ export default function ConfiguracionPage() {
                     <h1 className="page-title">Configuración</h1>
                 </div>
                 <p className="page-subtitle">
-                    Gestioná la conexión con Tiendanube y la importación de datos.
+                    Gestioná la conexión con Tiendanube, importación de datos y descuentos por medio de pago.
                 </p>
             </div>
 
             <div className="settings-grid">
                 <TiendanubeConnection />
                 <CatalogImport />
+                <PaymentDiscounts />
             </div>
         </div>
     );
